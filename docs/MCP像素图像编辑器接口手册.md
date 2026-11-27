@@ -1,6 +1,6 @@
 # MCP 像素图像编辑器接口手册
 
-> **适用版本**：Mosaic Image Editor **1.1.0.4** ｜ **13 个工具，单档**（`serverInfo.variant = "full"`，`serverInfo.toolCount = 13`）
+> **适用版本**：Mosaic Image Editor **1.1.0.5** ｜ **13 个工具，单档**（`serverInfo.variant = "full"`，`serverInfo.toolCount = 13`）
 > **对象**：通过 MCP 驱动本编辑器的 AI Agent 及其编写者。
 > **边界**：本文只讲**接口契约**（参数、返回、错误、约束）。画布模型与算法细节见编辑器使用说明 `readme.md`。
 
@@ -307,12 +307,13 @@
 - 只作用于**当前帧**的撤销栈。栈空 → `E_UNDO_EMPTY`。
 - `changed_bbox` 是**闭区间** `{x,y,w,h}`；无变化时必须是 `null`。
 
-### 2.10 `mosaic_frame` — 帧操作（8 动作）
+### 2.10 `mosaic_frame` — 帧操作（9 动作）
 
 | 参数 | 类型 | 必填 | 适用动作 |
 |---|---|:--:|---|
-| `action` | string | ✅ | `list` / `set` / `add` / `duplicate` / `delete` / `setMode` / `setDelay` / `setLoop` |
-| `index` | int | `set` 时必填 | 目标帧 `0..frameCount-1`；**只对 `set` / `setDelay` / `duplicate` 合法**（其它动作带上 → `E_BAD_ARG`）。`setDelay` 缺省当前帧；`duplicate` 缺省复制当前帧 |
+| `action` | string | ✅ | `list` / `set` / `add` / `duplicate` / `delete` / `setMode` / `setDelay` / `setLoop` / `diff` |
+| `index` | int | `set` 时必填 | 目标帧 `0..frameCount-1`；**只对 `set` / `setDelay` / `duplicate` / `diff` 合法**（其它动作带上 → `E_BAD_ARG`）。`setDelay` 缺省当前帧；`duplicate` 缺省复制当前帧 |
+| `against` | int | ❌ | `diff` 专用（别的动作带上 → `E_BAD_ARG`）：比对的另一侧帧号，缺省 `0`；`index`/`against` 越界 → `E_BAD_ARG` + 零副作用 |
 | `count` | int | ❌ | `1..512`；**只对 `add` / `duplicate` 合法**；缺省 1 |
 | `delayMs` | int | ❌ | `10..65535`。`add`/`duplicate` 用它设新帧（缺省**继承源帧**）；`setDelay` 必填 |
 | `compositeMode` | int | ❌ | `0..7`：`bit0` = 合成前整幅清零，`bit1..2` = 算子（0 覆盖 / 1 XOR / 2 AND / 3 OR）。用于 `add` / `duplicate` / `setMode` |
@@ -349,6 +350,8 @@
 **`setDelay`**：改延时，**可撤销**（压帧描述符快照，进**目标帧自己**的撤销栈）；同值 → `changed:false`。`index` 只改指定帧，**绝不切换**人的当前帧（返回 `current` = 未变的当前帧、`switched:false`）。返回 `frame` / `delayMs` / `previousDelayMs` / `changed` / `current` / `switched` / `undoable:true`。会置 `modified`。
 
 **`setLoop`**：文档级循环标志（单一真相源 `m_loopFlag`，同步工具栏）。**不可撤销**（`undoable:false`）；**只在 `.pxa` 导出时生效**，`.pxp` 不存 → 存盘重开归默认。返回 `loop` / `previous` / `changed` / `undoable:false`。
+
+**`diff`**（**读类**：不产生撤销、**播放中照常可用**）：`{action:"diff", index:3, against:0}` → `changed`（差异像素数）+ `bbox`（最小包围盒，`changed==0` 时**必为 `null`**）+ `frames:[index,against]`。比较范围 = 逻辑画布 `w×h` 行优先（与 `hash` / `crc32` 同口径）；`index` 与 `against` 可相同（恒 0）。**没有** `x/y/w/h`（要局部比较用 `region_get{frame:N}`）；`loop`/`count`/`delayMs`/`compositeMode` 带上 → `E_BAD_ARG`。用途：帧间/接缝差量（`batch` 的 `changed_pixels` 只统计**当前帧**，跨帧批写完靠它自证）。
 
 **帧动画的调用节奏**：`batch`（第 0 帧）→ 循环 `{"action":"duplicate"} → batch` → 共 `2N+1` 次调用画完 N 帧（`duplicate` 自动切到新帧，不要补 `set`）。
 **视觉周期自检**：`list` 的 `hash` 按值分组 —— 全不同 = 每帧新姿态；出现成对相同 = 周期 < 帧数。`视觉周期 = 对称角 / gcd(步进, 对称角)`（= `LCM(步进,对称角)/步进`）。`hash` 全不同也**不代表主运动正确**（旁支元素会撑开哈希）。
@@ -403,19 +406,24 @@
 | `draw` | `kind`, `verb`, `color`, `paths`, `thickness`(op 级), `frame` | 图元，`verb` 取值与 `mosaic_draw` 相同；`paths` 每项 `{points, closed}` |
 | `fill` | `kind`, `x`, `y`, `color`, `frame` | 洪水填充种子点 |
 | `copy` | `kind`, `srcFrame`, `x`, `y`, `w`, `h`, `dstX`, `dstY`, `mode`, `skipIndex`, `frame` | 帧间区域复制（源 = `srcFrame` 的矩形；目标 = `frame`（缺省当前帧）的 `(dstX,dstY)`） |
-| `write` | `kind`, `indices`, `x`, `y`, `w`, `h`, `frame` | 像素直写（整帧或矩形） |
+| `write` | `kind`, `indices` **或** `indicesB64`+`rawLen`, `x`, `y`, `w`, `h`, `frame` | 像素直写（整帧或矩形；两种载荷二选一） |
 
 **`kind:"write"`**
 
 | 字段 | 必填 | 缺省 | 说明 |
 |---|:--:|---|---|
-| `indices` | ✅ | — | 长度**必须 == `w*h`**；**行优先（先 y 后 x）**，与 `region_get{format:"raw"}` 的 `indices` 完全同序 → 读回来改完可直接写回 |
+| `indices` | 与 `indicesB64` 二选一 | — | 明文数组。长度**必须 == `w*h`**；**行优先（先 y 后 x）**，与 `region_get{format:"raw"}` 的 `indices` 完全同序 → 读回来改完可直接写回 |
+| `indicesB64` | 与 `indices` 二选一 | — | `base64(`**裸**`索引字节)`（**不压缩**，行优先同上）。同一条管道能装 **~2.4 倍**像素（明文 ≈3.4 B/px vs base64 ≈1.33 B/px） |
+| `rawLen` | 随 `indicesB64` **必填** | — | 解码后的字节数，**必须 == `w*h`**（冗余校验） |
 | `x` / `y` | ❌ | 0 | 目标矩形左上角（画布像素） |
 | `w` / `h` | ❌ | `canvasW-x` / `canvasH-y` | 目标矩形尺寸（≥1，且 `w*h ≤ 65536`） |
 
 - 索引值域 `0 .. (1<<depth)-1`；越界 → `E_BAD_ARG`，零副作用。
 - 🔴 缓冲区恒为 256×256，**写入按行跨度 256 推进**（按逻辑宽寻址会在小画布上写串行）。
-- 载荷闸：**单请求所有 `write` op 的 `indices` 总数 ≤ 131 072**（≈450 KB，低于管道单帧 1 MB）；超了 → `E_BAD_ARG`（提示拆批）。
+- 🔴 **两道闸**：**闸 1（传输）** = 整包请求 ≤ 管道单帧 **1 MB**，超了 → `E_BAD_ARG` + 「split into smaller batches」+ 实际字节；**闸 2（解码/内存/耗时）** = `sum(rawLen)` ≤ **1 048 576**（理由**不是**字节）。明文 `indices` 另走 **131 072 px** 的闸。
+- **分批算式**：明文 256×256 一帧 ≈223 KB → 1 MB 只够 **2 帧**；base64 一帧 **87 381 B** → 一次可写 **~11 帧**（含 JSON 开销取 **10 帧** 稳妥）→ 256×256×16 = **2 批**（明文要 8 批）。128×48×16 两种载荷都是 1 批。
+- 载荷**不压缩**（RLE/LZ4 不在本版）；解码失败 / 长度不符 / 值域越界 / 闸超限 → 一律 `E_BAD_ARG` + **零副作用**。
+- 编码片段：JS `Buffer.from(indices).toString('base64')`；Python `base64.b64encode(bytes(indices)).decode()`。
 - 整帧写法：`{ "kind":"write", "indices":[...] }`（`x/y` 缺省 0，`w/h` 缺省到画布右下角）。
 
 **`kind:"copy"`**

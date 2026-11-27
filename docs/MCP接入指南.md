@@ -1,6 +1,6 @@
 # MCP 接入指南
 
-> 适用版本：Mosaic Image Editor **1.1.0.4** ｜ 面向 **任意支持 MCP（Model Context Protocol）的 AI 客户端**（Claude Desktop / Claude Code / pi / Cursor / Cline / Windsurf / 自研客户端）
+> 适用版本：Mosaic Image Editor **1.1.0.5** ｜ 面向 **任意支持 MCP（Model Context Protocol）的 AI 客户端**（Claude Desktop / Claude Code / pi / Cursor / Cline / Windsurf / 自研客户端）
 > 本文件只讲「**怎么连上**」；每个工具的入参、返回值与错误码见 [`MCP像素图像编辑器接口手册.md`](./MCP像素图像编辑器接口手册.md)。
 
 ---
